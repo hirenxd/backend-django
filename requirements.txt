@@ -1,0 +1,10 @@
+Django>=4.2,<5.0
+gunicorn>=21.2
+uvicorn[standard]>=0.30
+whitenoise
+psycopg2-binary
+python-dotenv
+django-storages
+boto3
+django-environ
+django-cors-headers
