@@ -11,7 +11,7 @@ A production-ready personal diary application designed to demonstrate **DevOps b
 
 > **Note**: This project mimics a real-world setup by using **SQLite** for local development speed, while seamlessly switching to **AWS RDS (PostgreSQL)** and **S3** in production.
 
-**Live API Base URL:** `https://diary.work.gd/api/`
+**Live API Base URL:** `https://diary.work.gd`
 
 ## 📖 Table of Contents
 - [Architecture](#-architecture)
