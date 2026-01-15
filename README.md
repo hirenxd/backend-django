@@ -164,7 +164,6 @@ docker compose up -d
 
 ## 📸 Screenshots
 
-> **Note to User**: Please upload screenshots to the `docs/` folder and update the filenames below if they differ.
 
 | Home Page | Login Page |
 |:---:|:---:|
