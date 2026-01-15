@@ -26,11 +26,12 @@ A production-ready personal diary application designed to demonstrate **DevOps b
 
 ## 🏗 Architecture
 
-The application demonstrates a 3-tier architecture on AWS:
+The application demonstrates a 3-tier architecture on AWS, secured with SSL:
 
 ```mermaid
 graph TD
-    Client["Client Browser"] -->|HTTP:80| ALB["Application Load Balancer"]
+    Client["Client Browser"] -->|HTTPS:443| R53["Route 53 (DNS)"]
+    R53 -->|Alias| ALB["Application Load Balancer (ACM SSL)"]
     Client -->|HTTPS| S3["AWS S3 Bucket (Static Files)"]
     ALB -->|Forward| ASG["Auto Scaling Group"]
     subgraph "EC2 Instances (Scaled)"
@@ -41,20 +42,22 @@ graph TD
 ```
 
 ### Infrastructure decisions:
+- **Route 53**: Manages the domain `diary.work.gd` and routes traffic to the ALB.
+- **ACM (Certificate Manager)**: Provisions and manages the SSL public certificate for secure HTTPS communication.
+- **ALB (Application Load Balancer)**: Terminates SSL and distributes traffic across instances.
 - **Docker Compose**: Orchestrates the Nginx and Django containers.
-- **Nginx**: Acts as the reverse proxy, handling static files (local) and forwarding application traffic to Gunicorn.
-- **ALB (Application Load Balancer)**: Manages incoming traffic and performs health checks.
+- **Nginx**: Acts as the reverse proxy inside the container.
 - **Auto Scaling**: Dynamically adjusts the number of EC2 instances based on CPU utilization.
-- **RDS (Relational Database Service)**: Managed PostgreSQL instance for persistent data storage.
-- **S3 (Simple Storage Service)**: Offloads static assets (CSS, JS, Images) for performance and scalability in production.
-- **Secrets Manager**: Securely stores database credentials, fetched by the application at runtime.
+- **RDS**: Managed PostgreSQL instance.
+- **S3**: Offloads static assets.
+- **Secrets Manager**: Securely stores database credentials.
 
 ## ✨ Key Features
+- **Secure Access**: Full HTTPS support via Route 53 and ACM.
 - **DevOps**: Dockerized stack, creating a consistent environment from dev to prod.
-- **AWS Integration**: Ready for deployment with User Data scripts for automated provisioning.
-- **Security**: Database credentials stored in Secrets Manager; Static files separated in S3.
-- **Scalability**: Configured for horizontal scaling with AWS Auto Scaling Groups.
-- **Application**: Secure user authentication, session management, and CRUD operations for diary entries.
+- **AWS Integration**: Production-ready setup with User Data scripts.
+- **Scalability & Resilience**: ASG for scaling and RDS for data persistence.
+- **Application**: Secure user authentication and diary management.
 
 ## 📂 Project Structure
 
@@ -120,10 +123,12 @@ Pre-requisites: **Python 3.10+** and **virturalenv**.
 ## ☁ Production Deployment (AWS)
 
 ### Infrastructure Components
+- **Domain**: `diary.work.gd` managed by **Route 53**.
+- **SSL**: **AWS ACM** certificate attached to the Load Balancer.
 - **EC2**: Ubuntu 22.04+ Instances in an Auto Scaling Group.
-- **RDS**: PostgreSQL engine for robust data management.
-- **S3 Bucket**: Hosts collected static files.
-- **Secrets Manager**: Stores sensitive DB config (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`).
+- **RDS**: PostgreSQL engine.
+- **S3 Bucket**: Static files.
+- **Secrets Manager**: DB Credentials.
 - **IAM Role**: Requires permissions for:
   - `AmazonEC2ContainerRegistryReadOnly`
   - `CloudWatchAgentServerPolicy`
