@@ -30,14 +30,14 @@ The application demonstrates a 3-tier architecture on AWS:
 
 ```mermaid
 graph TD
-    Client[Client Browser] -->|HTTP:80| ALB[Application Load Balancer]
-    Client -->|HTTPS| S3[AWS S3 Bucket (Static Files)]
-    ALB -->|Forward| ASG[Auto Scaling Group]
+    Client["Client Browser"] -->|HTTP:80| ALB["Application Load Balancer"]
+    Client -->|HTTPS| S3["AWS S3 Bucket (Static Files)"]
+    ALB -->|Forward| ASG["Auto Scaling Group"]
     subgraph "EC2 Instances (Scaled)"
-        Nginx[Nginx Reverse Proxy :80] -->|Proxy Pass| Gunicorn[Django + Gunicorn :8000]
+        Nginx["Nginx Reverse Proxy :80"] -->|Proxy Pass| Gunicorn["Django + Gunicorn :8000"]
     end
-    Gunicorn -->|Read/Write| RDS[(AWS RDS PostgreSQL)]
-    Gunicorn -.->|Fetch Credentials| ASM[AWS Secrets Manager]
+    Gunicorn -->|Read/Write| RDS[("AWS RDS PostgreSQL")]
+    Gunicorn -.->|Fetch Credentials| ASM["AWS Secrets Manager"]
 ```
 
 ### Infrastructure decisions:
