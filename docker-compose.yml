@@ -1,15 +1,20 @@
 services:
   web:
-    image: 628253046406.dkr.ecr.ap-south-1.amazonaws.com/diary-backend:cc
-    container_name: diary-app
+    image: 628253046406.dkr.ecr.ap-south-1.amazonaws.com/diary-backend:test
     restart: always
+    environment:
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
     volumes:
+      - /home/ubuntu/entrypoint.sh:/entrypoint.sh:ro
       - static_volume:/app/staticfiles
-    # No ports exposed to host; stays private inside the Docker network
+    entrypoint: /entrypoint.sh
 
   nginx:
     image: nginx:latest
-    container_name: diary-nginx
     restart: always
     ports:
       - "80:80"
