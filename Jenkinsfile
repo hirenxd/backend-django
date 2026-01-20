@@ -3,9 +3,12 @@ pipeline {
 
     environment {
         AWS_REGION = "ap-south-1"
+        IMAGE_NAME = "backend-django"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
     }
 
     stages {
+
         stage('Verify AWS Access') {
             steps {
                 withCredentials([
@@ -16,11 +19,21 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                    echo "Verifying AWS identity (safe command)"
                     aws sts get-caller-identity
                     '''
                 }
             }
         }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                echo "Building Docker image..."
+                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                docker images | grep ${IMAGE_NAME}
+                '''
+            }
+        }
     }
 }
+
