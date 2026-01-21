@@ -10,7 +10,7 @@ def health(request):
 
 def health_api(request):
     return JsonResponse({
-        "status": "ok",
+        "status": "oki",
         "service": "diary-backend"
     })
 
