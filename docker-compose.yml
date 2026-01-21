@@ -1,6 +1,6 @@
 services:
   web:
-    image: 628253046406.dkr.ecr.ap-south-1.amazonaws.com/diary-backend:test
+    image: 628253046406.dkr.ecr.ap-south-1.amazonaws.com/diary-backend:latest
     restart: always
     environment:
       DB_NAME: ${DB_NAME}
@@ -9,9 +9,7 @@ services:
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
     volumes:
-      - /home/ubuntu/entrypoint.sh:/entrypoint.sh:ro
       - static_volume:/app/staticfiles
-    entrypoint: /entrypoint.sh
 
   nginx:
     image: nginx:latest
@@ -19,7 +17,7 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - static_volume:/app/staticfiles:ro
     depends_on:
       - web
