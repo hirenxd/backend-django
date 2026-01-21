@@ -6,6 +6,7 @@ pipeline {
         ACCOUNT_ID = "628253046406"
         ECR_REPO   = "diary-backend"
         IMAGE_TAG  = "${BUILD_NUMBER}"
+        ASG_NAME   = "diary-public-asg"
     }
 
     stages {
@@ -58,11 +59,40 @@ pipeline {
                 docker tag ${ECR_REPO}:${IMAGE_TAG} \
                   ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
 
-                docker push \
-                  ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                docker tag ${ECR_REPO}:${IMAGE_TAG} \
+                  ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+
+                docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                docker push ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
                 '''
             }
         }
-        
+
+        stage('Deploy via ASG Rolling Refresh') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                    aws autoscaling start-instance-refresh \
+                      --auto-scaling-group-name ${ASG_NAME} \
+                      --strategy Rolling
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "CI/CD pipeline completed successfully."
+        }
+        failure {
+            echo "CI/CD pipeline failed. Check logs."
+        }
     }
 }
