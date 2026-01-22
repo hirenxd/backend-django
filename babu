@@ -9,6 +9,9 @@ pipeline {
         IMAGE_TAG   = "${BUILD_NUMBER}"
         EC2_HOST    = "13.232.103.44"
         EC2_USER    = "ubuntu"
+
+        BLUE_PORT  = "8001"
+        GREEN_PORT = "8002"
     }
 
     stages {
@@ -35,8 +38,8 @@ pipeline {
                     )
                 ]) {
                     sh """
-                    aws ecr get-login-password --region ${AWS_REGION} \
-                    | docker login --username AWS --password-stdin \
+                    aws ecr get-login-password --region ${AWS_REGION} |
+                    docker login --username AWS --password-stdin \
                     ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     """
                 }
@@ -58,55 +61,65 @@ pipeline {
             }
         }
 
-        stage('Deploy (Single Instance Blue/Green)') {
+        stage('Deploy (True Blue/Green)') {
             steps {
                 sshagent(['ec2-ssh-key']) {
                     sh """
 ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
 set -e
 
-echo "▶ Preparing deployment directory"
-sudo mkdir -p /opt/diary-deploy
-sudo chown -R ${EC2_USER}:${EC2_USER} /opt/diary-deploy
 cd /opt/diary-deploy
 
-echo "▶ Pulling latest image"
+# Detect active color
+if docker ps --format '{{.Names}}' | grep -q diary-backend-blue; then
+  ACTIVE=blue
+  ACTIVE_PORT=${BLUE_PORT}
+  NEW=green
+  NEW_PORT=${GREEN_PORT}
+else
+  ACTIVE=green
+  ACTIVE_PORT=${GREEN_PORT}
+  NEW=blue
+  NEW_PORT=${BLUE_PORT}
+fi
+
+echo "▶ Active: \$ACTIVE on port \$ACTIVE_PORT"
+echo "▶ Deploying: \$NEW on port \$NEW_PORT"
+
 docker pull ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
 
-echo "▶ Starting GREEN container"
-docker compose -f docker-compose.green.yml up -d --force-recreate
+docker compose -f docker-compose.\$NEW.yml up -d --force-recreate
 
-echo "▶ Waiting for GREEN health"
+echo "▶ Waiting for \$NEW health"
 for i in {1..30}; do
-  if curl -fs http://localhost:8001/health > /dev/null; then
-    echo "✔ GREEN is healthy"
+  if curl -fs http://localhost:\$NEW_PORT/health > /dev/null; then
+    echo "✔ \$NEW is healthy"
     break
   fi
   sleep 2
 done
 
-echo "▶ Writing Nginx config"
-sudo bash -c 'cat > /etc/nginx/conf.d/diary.conf << "NGINX"
+echo "▶ Switching Nginx to \$NEW_PORT"
+sudo bash -c "cat > /etc/nginx/conf.d/diary.conf << NGINX
 server {
     listen 80;
-
     location / {
-        proxy_pass http://127.0.0.1:8001;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_pass http://127.0.0.1:\$NEW_PORT;
+        proxy_set_header Host \\\$host;
+        proxy_set_header X-Real-IP \\\$remote_addr;
+        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
     }
 }
-NGINX'
+NGINX"
 
 sudo nginx -t
 sudo systemctl reload nginx
 
-echo "▶ Cleaning BLUE container (if exists)"
-docker stop diary-backend-blue || true
-docker rm diary-backend-blue || true
+echo "▶ Stopping \$ACTIVE"
+docker stop diary-backend-\$ACTIVE || true
+docker rm diary-backend-\$ACTIVE || true
 
-echo "✔ Deployment successful"
+echo "✔ Zero-downtime deployment completed"
 EOF
 """
                 }
@@ -116,10 +129,10 @@ EOF
 
     post {
         success {
-            echo "✅ Deployment completed with near-zero downtime"
+            echo "✅ Deployment completed with ZERO downtime"
         }
         failure {
-            echo "❌ Pipeline failed — review logs"
+            echo "❌ Deployment failed"
         }
     }
 }
