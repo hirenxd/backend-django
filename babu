@@ -1,0 +1,110 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = "ap-south-1"
+        ECR_REPO   = "628253046406.dkr.ecr.ap-south-1.amazonaws.com/diary-backend"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
+        SERVER_IP  = "13.232.103.44"
+        SSH_USER   = "ubuntu"
+    }
+
+    stages {
+
+        stage("Checkout") {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage("Build Docker Image") {
+            steps {
+                sh "docker build -t diary-backend:${IMAGE_TAG} ."
+            }
+        }
+
+        stage("Login to ECR") {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: "aws-creds",
+                    usernameVariable: "AWS_ACCESS_KEY_ID",
+                    passwordVariable: "AWS_SECRET_ACCESS_KEY"
+                )]) {
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                    | docker login --username AWS --password-stdin ${ECR_REPO}
+                    """
+                }
+            }
+        }
+
+        stage("Push Image to ECR") {
+            steps {
+                sh """
+                docker tag diary-backend:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}
+                docker tag diary-backend:${IMAGE_TAG} ${ECR_REPO}:latest
+                docker push ${ECR_REPO}:${IMAGE_TAG}
+                docker push ${ECR_REPO}:latest
+                """
+            }
+        }
+
+        stage("Deploy (Zero-Downtime, Single Instance)") {
+            steps {
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh """
+                    ssh -o StrictHostKeyChecking=no ${SSH_USER}@${SERVER_IP} << 'EOF'
+                    set -e
+
+                    cd /opt/diary-deploy
+
+                    if [ ! -f active_color.txt ]; then
+                        echo blue > active_color.txt
+                    fi
+
+                    ACTIVE=\$(cat active_color.txt)
+
+                    if [ "\$ACTIVE" = "blue" ]; then
+                        NEW=green
+                        NEW_PORT=8002
+                        OLD=blue
+                    else
+                        NEW=blue
+                        NEW_PORT=8001
+                        OLD=green
+                    fi
+
+                    echo "Deploying \$NEW environment"
+
+                    docker pull ${ECR_REPO}:latest
+                    docker compose -f docker-compose.\$NEW.yml up -d
+
+                    echo "Waiting for app to become healthy..."
+                    sleep 10
+                    curl -f http://localhost:\$NEW_PORT/health/
+
+                    echo "Switching Nginx traffic"
+                    sed -i "s/server 127.0.0.1:800[12];/server 127.0.0.1:\$NEW_PORT;/" \
+                        /etc/nginx/conf.d/diary.conf
+                    nginx -s reload
+
+                    echo "\$NEW" > active_color.txt
+                    docker compose -f docker-compose.\$OLD.yml down
+
+                    echo "Deployment completed successfully"
+                    EOF
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Deployment completed with zero downtime."
+        }
+        failure {
+            echo "Deployment failed. No traffic switch occurred."
+        }
+    }
+}
