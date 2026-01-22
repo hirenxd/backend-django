@@ -2,12 +2,14 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        AWS_REGION = "ap-south-1"
+        ACCOUNT_ID = "628253046406"
+        ECR_REPO   = "diary-backend"
+        ASG_NAME   = "diary-public-asg"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
     }
 
     stages {
-
-        /* ================= BUILD & PUSH ================= */
 
         stage('Verify AWS Access') {
             steps {
@@ -25,7 +27,9 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t ${ECR_REPO}:${IMAGE_TAG} .'
+                sh '''
+                docker build -t ${ECR_REPO}:${IMAGE_TAG} .
+                '''
             }
         }
 
@@ -40,8 +44,8 @@ pipeline {
                 ]) {
                     sh '''
                     aws ecr get-login-password --region ${AWS_REGION} \
-                      | docker login --username AWS --password-stdin \
-                        ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                    | docker login --username AWS --password-stdin \
+                      ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     '''
                 }
             }
@@ -62,8 +66,43 @@ pipeline {
             }
         }
 
-        /* ================= DEPLOY ================= */
+        /* ------------------------------------------------------- */
+        /* CRITICAL GUARD: WAIT FOR EXISTING INSTANCE REFRESH       */
+        /* ------------------------------------------------------- */
+        stage('Wait for Existing Instance Refresh') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                    echo "Checking for existing instance refresh..."
 
+                    while true; do
+                      COUNT=$(aws autoscaling describe-instance-refreshes \
+                        --auto-scaling-group-name ${ASG_NAME} \
+                        --query "InstanceRefreshes[?Status=='InProgress'] | length(@)" \
+                        --output text)
+
+                      if [ "$COUNT" = "0" ]; then
+                        echo "No instance refresh in progress."
+                        break
+                      fi
+
+                      echo "Instance refresh still running. Waiting..."
+                      sleep 30
+                    done
+                    '''
+                }
+            }
+        }
+
+        /* ------------------------------------------------------- */
+        /* SCALE UP TO CREATE DEPLOYMENT BUFFER                    */
+        /* ------------------------------------------------------- */
         stage('Scale ASG Up (Deploy Buffer)') {
             steps {
                 withCredentials([
@@ -75,14 +114,12 @@ pipeline {
                 ]) {
                     sh '''
                     echo "Scaling ASG to desired capacity = 2"
-
                     aws autoscaling update-auto-scaling-group \
                       --auto-scaling-group-name ${ASG_NAME} \
                       --desired-capacity 2
 
                     echo "Waiting for 2 InService instances..."
-
-                    MAX_WAIT=900
+                    MAX_WAIT=600
                     ELAPSED=0
 
                     while true; do
@@ -99,7 +136,7 @@ pipeline {
                       fi
 
                       sleep 15
-                      ELAPSED=$((ELAPSED + 15))
+                      ELAPSED=$((ELAPSED+15))
 
                       if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
                         echo "Timeout waiting for ASG scale-up"
@@ -111,7 +148,10 @@ pipeline {
             }
         }
 
-        stage('Deploy via ASG Rolling Refresh') {
+        /* ------------------------------------------------------- */
+        /* START INSTANCE REFRESH (ACTUAL DEPLOYMENT)              */
+        /* ------------------------------------------------------- */
+        stage('Deploy via ASG Instance Refresh') {
             steps {
                 withCredentials([
                     usernamePassword(
@@ -121,18 +161,6 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                    set -e
-
-                    REFRESH_ID=$(aws autoscaling describe-instance-refreshes \
-                      --auto-scaling-group-name ${ASG_NAME} \
-                      --query "InstanceRefreshes[?Status=='InProgress'].InstanceRefreshId" \
-                      --output text)
-
-                    if [ -n "$REFRESH_ID" ]; then
-                      echo "Instance refresh already in progress ($REFRESH_ID). Skipping."
-                      exit 0
-                    fi
-
                     aws autoscaling start-instance-refresh \
                       --auto-scaling-group-name ${ASG_NAME} \
                       --strategy Rolling
@@ -141,6 +169,9 @@ pipeline {
             }
         }
 
+        /* ------------------------------------------------------- */
+        /* WAIT FOR DEPLOYMENT TO FINISH                           */
+        /* ------------------------------------------------------- */
         stage('Wait for Instance Refresh Completion') {
             steps {
                 withCredentials([
@@ -152,7 +183,6 @@ pipeline {
                 ]) {
                     sh '''
                     echo "Waiting for instance refresh to complete..."
-
                     MAX_WAIT=1800
                     ELAPSED=0
 
@@ -175,7 +205,7 @@ pipeline {
                       fi
 
                       sleep 30
-                      ELAPSED=$((ELAPSED + 30))
+                      ELAPSED=$((ELAPSED+30))
 
                       if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
                         echo "Timeout waiting for instance refresh"
@@ -187,6 +217,9 @@ pipeline {
             }
         }
 
+        /* ------------------------------------------------------- */
+        /* SCALE BACK TO NORMAL                                    */
+        /* ------------------------------------------------------- */
         stage('Scale ASG Down (Normal State)') {
             steps {
                 withCredentials([
@@ -198,7 +231,6 @@ pipeline {
                 ]) {
                     sh '''
                     echo "Scaling ASG back to desired capacity = 1"
-
                     aws autoscaling update-auto-scaling-group \
                       --auto-scaling-group-name ${ASG_NAME} \
                       --desired-capacity 1
@@ -210,7 +242,7 @@ pipeline {
 
     post {
         success {
-            echo "CI/CD pipeline completed successfully with near-zero downtime."
+            echo "CI/CD pipeline completed successfully."
         }
         failure {
             echo "CI/CD pipeline failed. Check logs."
