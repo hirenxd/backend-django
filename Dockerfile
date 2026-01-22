@@ -1,25 +1,40 @@
-FROM python:3.12-slim
+# =========================
+# Stage 1: Builder
+# =========================
+FROM python:3.12-slim AS builder
 
-# Prevent Python from writing pyc files and enable real-time logs
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies
+# Install build dependencies (only for compiling wheels)
 RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies into a separate directory
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Copy application code
+
+# =========================
+# Stage 2: Runtime
+# =========================
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Copy only installed dependencies from builder
+COPY --from=builder /install /usr/local
+
+# Copy application source
 COPY . .
 
-
-# Make entrypoint script executable
+# Copy and set entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
