@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_TAG  = "${BUILD_NUMBER}"
+        IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -74,6 +74,18 @@ pipeline {
                     )
                 ]) {
                     sh '''
+                    set -e
+
+                    REFRESH_ID=$(aws autoscaling describe-instance-refreshes \
+                      --auto-scaling-group-name ${ASG_NAME} \
+                      --query 'InstanceRefreshes[?Status==`InProgress`].InstanceRefreshId' \
+                      --output text)
+
+                    if [ -n "$REFRESH_ID" ]; then
+                      echo "Instance refresh already in progress ($REFRESH_ID). Skipping new refresh."
+                      exit 0
+                    fi
+
                     aws autoscaling start-instance-refresh \
                       --auto-scaling-group-name ${ASG_NAME} \
                       --strategy Rolling
