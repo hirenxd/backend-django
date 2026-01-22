@@ -58,7 +58,7 @@ pipeline {
 
         stage('Deploy (Zero-Downtime, Single Instance)') {
             steps {
-                sshagent(['ubuntu']) {
+                sshagent(['ec2-ssh-key']) {
                     sh """
                       ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
                       set -e
