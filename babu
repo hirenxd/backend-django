@@ -2,14 +2,13 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = "ap-south-1"
-        AWS_ACCOUNT_ID = "628253046406"
-        IMAGE_NAME = "diary-backend"
-        IMAGE_TAG  = "${BUILD_NUMBER}"
-        ECR_REPO   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
-        EC2_USER   = "ubuntu"
-        EC2_HOST   = "13.232.103.44"
-        DEPLOY_DIR = "/opt/diary-deploy"
+        AWS_REGION    = "ap-south-1"
+        AWS_ACCOUNT   = "628253046406"
+        ECR_REPO      = "diary-backend"
+        IMAGE_NAME    = "diary-backend"
+        IMAGE_TAG     = "${BUILD_NUMBER}"
+        EC2_HOST      = "13.232.103.44"
+        EC2_USER      = "ubuntu"
     }
 
     stages {
@@ -23,7 +22,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                  docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                 """
             }
         }
@@ -38,8 +37,9 @@ pipeline {
                     )
                 ]) {
                     sh """
-                      aws ecr get-login-password --region ${AWS_REGION} \
-                      | docker login --username AWS --password-stdin ${ECR_REPO}
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                    | docker login --username AWS --password-stdin \
+                    ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     """
                 }
             }
@@ -48,43 +48,47 @@ pipeline {
         stage('Push Image to ECR') {
             steps {
                 sh """
-                  docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}
-                  docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO}:latest
-                  docker push ${ECR_REPO}:${IMAGE_TAG}
-                  docker push ${ECR_REPO}:latest
+                docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
+                  ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+
+                docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
+                  ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+
+                docker push ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                docker push ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
                 """
             }
         }
 
-        stage('Deploy (Zero-Downtime, Single Instance)') {
+        stage('Deploy (Single Instance Blue/Green)') {
             steps {
                 sshagent(['ec2-ssh-key']) {
                     sh """
-                      ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
-                      set -e
+ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << EOF
+set -e
 
-                      echo "▶ Preparing deployment directory"
-                      sudo mkdir -p ${DEPLOY_DIR}
-                      sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
-                      cd ${DEPLOY_DIR}
+echo "▶ Preparing deployment directory"
+sudo mkdir -p /opt/diary-deploy
+sudo chown -R ${EC2_USER}:${EC2_USER} /opt/diary-deploy
+cd /opt/diary-deploy
 
-                      echo "▶ Pulling latest image"
-                      docker pull ${ECR_REPO}:latest
+echo "▶ Pulling latest image"
+docker pull ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
 
-                      echo "▶ Starting GREEN container"
-                      docker compose -f docker-compose.green.yml up -d --force-recreate
+echo "▶ Starting GREEN container"
+docker compose -f docker-compose.green.yml up -d --force-recreate
 
-                      echo "▶ Waiting for app health"
-                      for i in {1..30}; do
-                        if curl -fs http://localhost:8001/health > /dev/null; then
-                          echo "✔ GREEN is healthy"
-                          break
-                        fi
-                        sleep 2
-                      done
+echo "▶ Waiting for GREEN to become healthy"
+for i in {1..30}; do
+  if curl -fs http://localhost:8001/health > /dev/null; then
+    echo "✔ GREEN is healthy"
+    break
+  fi
+  sleep 2
+done
 
-                      echo "▶ Switching Nginx traffic"
-                      sudo tee /etc/nginx/conf.d/diary.conf > /dev/null << 'NGINX'
+echo "▶ Switching Nginx traffic"
+sudo bash -c 'cat > /etc/nginx/conf.d/diary.conf << NGINX
 server {
     listen 80;
 
@@ -95,18 +99,18 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
-NGINX
+NGINX'
 
-                      sudo nginx -t
-                      sudo systemctl reload nginx
+sudo nginx -t
+sudo systemctl reload nginx
 
-                      echo "▶ Stopping BLUE container (if exists)"
-                      docker stop diary-backend-blue || true
-                      docker rm diary-backend-blue || true
+echo "▶ Stopping BLUE container (if exists)"
+docker stop diary-backend-blue || true
+docker rm diary-backend-blue || true
 
-                      echo "✔ Deployment successful"
-                      EOF
-                    """
+echo "✔ Deployment successful"
+EOF
+"""
                 }
             }
         }
@@ -114,10 +118,10 @@ NGINX
 
     post {
         success {
-            echo "✅ Deployment completed successfully"
+            echo "✅ Pipeline completed successfully with near-zero downtime"
         }
         failure {
-            echo "❌ Deployment failed. Traffic was not switched."
+            echo "❌ Pipeline failed — check logs above"
         }
     }
 }
