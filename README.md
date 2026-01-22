@@ -9,7 +9,7 @@
 
 A production-ready personal diary application designed to demonstrate **DevOps best practices** and **Cloud Infrastructure** implementation. This project highlights containerization, reverse proxying, and scalable AWS deployment architectures using modern services like **RDS**, **S3**, and **Secrets Manager**.
 
-> **Note**: This project mimics a real-world setup by using **SQLite** for local development speed, while seamlessly switching to **AWS RDS (PostgreSQL)** and **S3** in production.
+> **Note**: This project mimics a real-world setup by using **SQLite** for local development speed, while seamlessly switching to **AWS RDS (PostgreSQL)** and **S3** in production
 
 **Live Demo URL:** [https://diary.work.gd](https://diary.work.gd)
 
