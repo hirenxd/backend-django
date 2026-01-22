@@ -15,9 +15,7 @@ pipeline {
     stages {
 
         stage('Checkout') {
-            steps {
-                checkout scm
-            }
+            steps { checkout scm }
         }
 
         stage('Build Docker Image') {
@@ -36,25 +34,25 @@ pipeline {
                     )
                 ]) {
                     sh """
-                        aws ecr get-login-password --region ${AWS_REGION} \
-                        | docker login --username AWS --password-stdin \
-                        ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                      aws ecr get-login-password --region ${AWS_REGION} |
+                      docker login --username AWS --password-stdin \
+                      ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     """
                 }
             }
         }
 
-        stage('Push Image to ECR') {
+        stage('Push Image') {
             steps {
                 sh """
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
-                      ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                  docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
+                    ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
 
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
-                      ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+                  docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
+                    ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
 
-                    docker push ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
-                    docker push ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+                  docker push ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
+                  docker push ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
                 """
             }
         }
@@ -65,88 +63,40 @@ pipeline {
                     sh """
 ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
 set -e
-
 cd /opt/diary-deploy
 
-# --------------------------------------------------
-# Detect active color
-# --------------------------------------------------
-ACTIVE_PORT=\$(grep -oP 'proxy_pass http://127.0.0.1:\\K[0-9]+' /etc/nginx/conf.d/diary.conf || true)
+ACTIVE_LINK=\$(readlink /etc/nginx/conf.d/diary.conf || true)
 
-if [ "\$ACTIVE_PORT" = "8001" ]; then
-  ACTIVE_COLOR="blue"
-  NEW_COLOR="green"
-  NEW_PORT="8002"
+if echo "\$ACTIVE_LINK" | grep -q green; then
+  NEW=blue
+  OLD=green
 else
-  ACTIVE_COLOR="green"
-  NEW_COLOR="blue"
-  NEW_PORT="8001"
+  NEW=green
+  OLD=blue
 fi
 
-echo "▶ Active: \$ACTIVE_COLOR on port \$ACTIVE_PORT"
-echo "▶ Deploying: \$NEW_COLOR on port \$NEW_PORT"
+echo "▶ Deploying \$NEW"
 
-# --------------------------------------------------
-# Pull latest image
-# --------------------------------------------------
 docker pull ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+docker compose -f docker-compose.\$NEW.yml up -d --force-recreate
 
-# --------------------------------------------------
-# Start NEW container
-# --------------------------------------------------
-docker compose -f docker-compose.\${NEW_COLOR}.yml up -d --force-recreate
+PORT=\$([ "\$NEW" = "blue" ] && echo 8001 || echo 8002)
 
-# --------------------------------------------------
-# Health check
-# --------------------------------------------------
 for i in {1..30}; do
-  if curl -fs http://localhost:\${NEW_PORT}/health > /dev/null; then
-    echo "✔ \$NEW_COLOR healthy"
-    break
-  fi
-  sleep 2
+  curl -fs http://localhost:\$PORT/health && break || sleep 2
 done
 
-# --------------------------------------------------
-# Switch Nginx traffic (CRITICAL FIX HERE)
-# --------------------------------------------------
-sudo tee /etc/nginx/conf.d/diary.conf > /dev/null <<NGINX
-server {
-    listen 80;
+sudo ln -sf /etc/nginx/diary/diary-\$NEW.conf /etc/nginx/conf.d/diary.conf
+sudo nginx -t && sudo systemctl reload nginx
 
-    location / {
-        proxy_pass http://127.0.0.1:\${NEW_PORT};
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-    }
-}
-NGINX
+docker stop diary-backend-\$OLD || true
+docker rm diary-backend-\$OLD || true
 
-sudo nginx -t
-sudo systemctl reload nginx
-
-# --------------------------------------------------
-# Stop OLD container
-# --------------------------------------------------
-docker stop diary-backend-\${ACTIVE_COLOR} || true
-docker rm diary-backend-\${ACTIVE_COLOR} || true
-
-echo "✔ Zero-downtime deployment complete"
-
+echo "✔ Zero-downtime deployment completed"
 EOF
 """
                 }
             }
-        }
-    }
-
-    post {
-        success {
-            echo "✅ Deployment completed with zero downtime"
-        }
-        failure {
-            echo "❌ Deployment failed — check logs"
         }
     }
 }
