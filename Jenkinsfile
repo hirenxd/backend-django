@@ -2,11 +2,7 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = "ap-south-1"
-        ACCOUNT_ID = "628253046406"
-        ECR_REPO   = "diary-backend"
         IMAGE_TAG  = "${BUILD_NUMBER}"
-        ASG_NAME   = "diary-public-asg"
     }
 
     stages {
