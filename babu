@@ -4,11 +4,11 @@ pipeline {
     environment {
         AWS_REGION = "ap-south-1"
         AWS_ACCOUNT_ID = "628253046406"
-        ECR_REPO = "diary-backend"
         IMAGE_NAME = "diary-backend"
-        IMAGE_TAG = "${BUILD_NUMBER}"
-        EC2_USER = "ubuntu"
-        EC2_HOST = "13.232.103.44"
+        IMAGE_TAG  = "${BUILD_NUMBER}"
+        ECR_REPO   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${IMAGE_NAME}"
+        EC2_USER   = "ubuntu"
+        EC2_HOST   = "13.232.103.44"
         DEPLOY_DIR = "/opt/diary-deploy"
     }
 
@@ -23,7 +23,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                  docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                 """
             }
         }
@@ -31,13 +31,15 @@ pipeline {
         stage('Login to ECR') {
             steps {
                 withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
                 ]) {
                     sh """
-                    aws ecr get-login-password --region ${AWS_REGION} \
-                    | docker login --username AWS --password-stdin \
-                    ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}
+                      aws ecr get-login-password --region ${AWS_REGION} \
+                      | docker login --username AWS --password-stdin ${ECR_REPO}
                     """
                 }
             }
@@ -46,46 +48,64 @@ pipeline {
         stage('Push Image to ECR') {
             steps {
                 sh """
-                docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
-                  ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
-
-                docker tag ${IMAGE_NAME}:${IMAGE_TAG} \
-                  ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
-
-                docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}
-                docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+                  docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}
+                  docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${ECR_REPO}:latest
+                  docker push ${ECR_REPO}:${IMAGE_TAG}
+                  docker push ${ECR_REPO}:latest
                 """
             }
         }
 
         stage('Deploy (Zero-Downtime, Single Instance)') {
             steps {
-                sshagent(credentials: ['ubuntu']) {
+                sshagent(['ubuntu']) {
                     sh """
-                    ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
-                        set -e
+                      ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
+                      set -e
 
-                        echo "Pulling latest image"
-                        docker pull ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
+                      echo "▶ Preparing deployment directory"
+                      sudo mkdir -p ${DEPLOY_DIR}
+                      sudo chown -R ubuntu:ubuntu ${DEPLOY_DIR}
+                      cd ${DEPLOY_DIR}
 
-                        echo "Deploying GREEN container"
-                        cd ${DEPLOY_DIR}
-                        docker compose -f docker-compose.green.yml up -d
+                      echo "▶ Pulling latest image"
+                      docker pull ${ECR_REPO}:latest
 
-                        echo "Waiting for app to become healthy..."
-                        sleep 10
-                        curl -f http://localhost:8000/health || exit 1
+                      echo "▶ Starting GREEN container"
+                      docker compose -f docker-compose.green.yml up -d --force-recreate
 
-                        echo "Switching Nginx traffic to GREEN"
-                        sudo sed -i 's/diary-backend-blue/diary-backend-green/' /etc/nginx/conf.d/diary.conf
-                        sudo nginx -t
-                        sudo systemctl reload nginx
+                      echo "▶ Waiting for app health"
+                      for i in {1..30}; do
+                        if curl -fs http://localhost:8001/health > /dev/null; then
+                          echo "✔ GREEN is healthy"
+                          break
+                        fi
+                        sleep 2
+                      done
 
-                        echo "Stopping BLUE container"
-                        docker compose -f docker-compose.blue.yml down
+                      echo "▶ Switching Nginx traffic"
+                      sudo tee /etc/nginx/conf.d/diary.conf > /dev/null << 'NGINX'
+server {
+    listen 80;
 
-                        echo "Deployment completed successfully"
-                    EOF
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+NGINX
+
+                      sudo nginx -t
+                      sudo systemctl reload nginx
+
+                      echo "▶ Stopping BLUE container (if exists)"
+                      docker stop diary-backend-blue || true
+                      docker rm diary-backend-blue || true
+
+                      echo "✔ Deployment successful"
+                      EOF
                     """
                 }
             }
@@ -94,10 +114,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Deployment successful with zero downtime"
+            echo "✅ Deployment completed successfully"
         }
         failure {
-            echo "❌ Deployment failed. No traffic switch occurred."
+            echo "❌ Deployment failed. Traffic was not switched."
         }
     }
 }
