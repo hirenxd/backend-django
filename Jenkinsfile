@@ -243,9 +243,23 @@ pipeline {
     post {
         success {
             echo "CI/CD pipeline completed successfully."
+    
+            slackSend(
+                channel: '#jenkins-builds',
+                color: 'good',
+                message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} deployed successfully"
+            )
         }
+    
         failure {
             echo "CI/CD pipeline failed. Check logs."
+    
+            slackSend(
+                channel: '#jenkins-builds',
+                color: 'danger',
+                message: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER} – check Jenkins logs"
+            )
         }
     }
+
 }
