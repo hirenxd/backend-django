@@ -10,7 +10,7 @@ graceful_shutdown() {
 trap graceful_shutdown SIGTERM SIGINT
 
 # --- App startup ---
-python manage.py migrate --noinput
+#python manage.py migrate --noinput
 
 exec gunicorn diary_project.wsgi:application \
   --bind 0.0.0.0:8000 \
