@@ -7,11 +7,9 @@ pipeline {
         ECR_REPO    = "diary-backend"
         IMAGE_NAME  = "diary-backend"
         IMAGE_TAG   = "${BUILD_NUMBER}"
-        EC2_HOST    = "13.232.103.44"
-        EC2_USER    = "ubuntu"
 
-        BLUE_PORT  = "8001"
-        GREEN_PORT = "8002"
+        EC2_HOST = "13.232.103.44"
+        EC2_USER = "ubuntu"
     }
 
     stages {
@@ -38,8 +36,8 @@ pipeline {
                     )
                 ]) {
                     sh """
-                    aws ecr get-login-password --region ${AWS_REGION} |
-                    docker login --username AWS --password-stdin \
+                    aws ecr get-login-password --region ${AWS_REGION} \
+                    | docker login --username AWS --password-stdin \
                     ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
                     """
                 }
@@ -61,7 +59,7 @@ pipeline {
             }
         }
 
-        stage('Deploy (True Blue/Green)') {
+        stage('Deploy (True Blue/Green – Zero Downtime)') {
             steps {
                 sshagent(['ec2-ssh-key']) {
                     sh """
@@ -70,56 +68,63 @@ set -e
 
 cd /opt/diary-deploy
 
-# Detect active color
-if docker ps --format '{{.Names}}' | grep -q diary-backend-blue; then
-  ACTIVE=blue
-  ACTIVE_PORT=${BLUE_PORT}
-  NEW=green
-  NEW_PORT=${GREEN_PORT}
+# Detect active container
+if docker ps --format '{{.Names}}' | grep -q diary-backend-green; then
+    ACTIVE_COLOR="green"
+    ACTIVE_PORT=8002
+    NEW_COLOR="blue"
+    NEW_PORT=8001
 else
-  ACTIVE=green
-  ACTIVE_PORT=${GREEN_PORT}
-  NEW=blue
-  NEW_PORT=${BLUE_PORT}
+    ACTIVE_COLOR="blue"
+    ACTIVE_PORT=8001
+    NEW_COLOR="green"
+    NEW_PORT=8002
 fi
 
-echo "▶ Active: \$ACTIVE on port \$ACTIVE_PORT"
-echo "▶ Deploying: \$NEW on port \$NEW_PORT"
+echo "▶ Active: \$ACTIVE_COLOR on port \$ACTIVE_PORT"
+echo "▶ Deploying: \$NEW_COLOR on port \$NEW_PORT"
 
+# Pull latest image
 docker pull ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest
 
-docker compose -f docker-compose.\$NEW.yml up -d --force-recreate
+# Start new container
+docker compose -f docker-compose.\$NEW_COLOR.yml up -d --force-recreate
 
-echo "▶ Waiting for \$NEW health"
+# Health check
+echo "▶ Waiting for \$NEW_COLOR health"
 for i in {1..30}; do
   if curl -fs http://localhost:\$NEW_PORT/health > /dev/null; then
-    echo "✔ \$NEW is healthy"
+    echo "✔ \$NEW_COLOR is healthy"
     break
   fi
   sleep 2
 done
 
-echo "▶ Switching Nginx to \$NEW_PORT"
-sudo bash -c "cat > /etc/nginx/conf.d/diary.conf << NGINX
+# Switch Nginx traffic
+echo "▶ Switching Nginx to port \$NEW_PORT"
+
+sudo tee /etc/nginx/conf.d/diary.conf > /dev/null <<NGINX
 server {
     listen 80;
+
     location / {
         proxy_pass http://127.0.0.1:\$NEW_PORT;
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
-        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
-NGINX"
+NGINX
 
 sudo nginx -t
 sudo systemctl reload nginx
 
-echo "▶ Stopping \$ACTIVE"
-docker stop diary-backend-\$ACTIVE || true
-docker rm diary-backend-\$ACTIVE || true
+# Stop old container
+echo "▶ Stopping \$ACTIVE_COLOR container"
+docker stop diary-backend-\$ACTIVE_COLOR || true
+docker rm diary-backend-\$ACTIVE_COLOR || true
 
-echo "✔ Zero-downtime deployment completed"
+echo "✔ Zero-downtime deployment complete"
 EOF
 """
                 }
@@ -129,10 +134,10 @@ EOF
 
     post {
         success {
-            echo "✅ Deployment completed with ZERO downtime"
+            echo "✅ Deployment completed with zero downtime"
         }
         failure {
-            echo "❌ Deployment failed"
+            echo "❌ Deployment failed — review logs"
         }
     }
 }
