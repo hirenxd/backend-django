@@ -64,6 +64,32 @@ pipeline {
             }
         }
 
+        /* ---------------- DEPLOYMENT SECTION ---------------- */
+
+        stage('Scale ASG Up (Deploy Buffer)') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                    echo "Scaling ASG to desired capacity = 2 for deployment buffer"
+
+                    aws autoscaling update-auto-scaling-group \
+                      --auto-scaling-group-name ${ASG_NAME} \
+                      --desired-capacity 2
+
+                    echo "Waiting for ASG to have 2 InService instances..."
+                    aws autoscaling wait group-in-service \
+                      --auto-scaling-group-name ${ASG_NAME}
+                    '''
+                }
+            }
+        }
+
         stage('Deploy via ASG Rolling Refresh') {
             steps {
                 withCredentials([
@@ -93,11 +119,69 @@ pipeline {
                 }
             }
         }
+
+        stage('Wait for Instance Refresh Completion') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                    echo "Waiting for instance refresh to complete..."
+
+                    while true; do
+                      STATUS=$(aws autoscaling describe-instance-refreshes \
+                        --auto-scaling-group-name ${ASG_NAME} \
+                        --max-items 1 \
+                        --query 'InstanceRefreshes[0].Status' \
+                        --output text)
+
+                      echo "Current refresh status: $STATUS"
+
+                      if [ "$STATUS" = "Successful" ]; then
+                        echo "Instance refresh completed successfully."
+                        break
+                      fi
+
+                      if [ "$STATUS" = "Failed" ]; then
+                        echo "Instance refresh failed."
+                        exit 1
+                      fi
+
+                      sleep 30
+                    done
+                    '''
+                }
+            }
+        }
+
+        stage('Scale ASG Down (Normal State)') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                    echo "Scaling ASG back to desired capacity = 1"
+
+                    aws autoscaling update-auto-scaling-group \
+                      --auto-scaling-group-name ${ASG_NAME} \
+                      --desired-capacity 1
+                    '''
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo "CI/CD pipeline completed successfully."
+            echo "CI/CD pipeline completed successfully with near-zero downtime."
         }
         failure {
             echo "CI/CD pipeline failed. Check logs."
