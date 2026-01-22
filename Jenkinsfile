@@ -7,7 +7,7 @@ pipeline {
 
     stages {
 
-        /* ---------------- BUILD & PUSH ---------------- */
+        /* ================= BUILD & PUSH ================= */
 
         stage('Verify AWS Access') {
             steps {
@@ -62,7 +62,7 @@ pipeline {
             }
         }
 
-        /* ---------------- DEPLOYMENT ---------------- */
+        /* ================= DEPLOY ================= */
 
         stage('Scale ASG Up (Deploy Buffer)') {
             steps {
@@ -74,28 +74,37 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                    echo "Scaling ASG to desired capacity = 2 (deployment buffer)"
+                    echo "Scaling ASG to desired capacity = 2"
 
                     aws autoscaling update-auto-scaling-group \
                       --auto-scaling-group-name ${ASG_NAME} \
                       --desired-capacity 2
 
-                    echo "Waiting for ASG to have 2 InService instances..."
+                    echo "Waiting for 2 InService instances..."
+
+                    MAX_WAIT=900
+                    ELAPSED=0
 
                     while true; do
-                      INSERVICE_COUNT=$(aws autoscaling describe-auto-scaling-groups \
+                      COUNT=$(aws autoscaling describe-auto-scaling-groups \
                         --auto-scaling-group-names ${ASG_NAME} \
                         --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'] | length(@)" \
                         --output text)
 
-                      echo "InService instances: $INSERVICE_COUNT"
+                      echo "InService instances: $COUNT"
 
-                      if [ "$INSERVICE_COUNT" -ge 2 ]; then
+                      if [ "$COUNT" -ge 2 ]; then
                         echo "Deployment buffer ready."
                         break
                       fi
 
                       sleep 15
+                      ELAPSED=$((ELAPSED + 15))
+
+                      if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+                        echo "Timeout waiting for ASG scale-up"
+                        exit 1
+                      fi
                     done
                     '''
                 }
@@ -144,10 +153,12 @@ pipeline {
                     sh '''
                     echo "Waiting for instance refresh to complete..."
 
+                    MAX_WAIT=1800
+                    ELAPSED=0
+
                     while true; do
                       STATUS=$(aws autoscaling describe-instance-refreshes \
                         --auto-scaling-group-name ${ASG_NAME} \
-                        --max-items 1 \
                         --query "InstanceRefreshes[0].Status" \
                         --output text)
 
@@ -164,6 +175,12 @@ pipeline {
                       fi
 
                       sleep 30
+                      ELAPSED=$((ELAPSED + 30))
+
+                      if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+                        echo "Timeout waiting for instance refresh"
+                        exit 1
+                      fi
                     done
                     '''
                 }
