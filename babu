@@ -2,13 +2,13 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION    = "ap-south-1"
-        AWS_ACCOUNT   = "628253046406"
-        ECR_REPO      = "diary-backend"
-        IMAGE_NAME    = "diary-backend"
-        IMAGE_TAG     = "${BUILD_NUMBER}"
-        EC2_HOST      = "13.232.103.44"
-        EC2_USER      = "ubuntu"
+        AWS_REGION  = "ap-south-1"
+        AWS_ACCOUNT = "628253046406"
+        ECR_REPO    = "diary-backend"
+        IMAGE_NAME  = "diary-backend"
+        IMAGE_TAG   = "${BUILD_NUMBER}"
+        EC2_HOST    = "13.232.103.44"
+        EC2_USER    = "ubuntu"
     }
 
     stages {
@@ -21,9 +21,7 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                """
+                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
             }
         }
 
@@ -64,7 +62,7 @@ pipeline {
             steps {
                 sshagent(['ec2-ssh-key']) {
                     sh """
-ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << EOF
+ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} << 'EOF'
 set -e
 
 echo "▶ Preparing deployment directory"
@@ -78,7 +76,7 @@ docker pull ${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:lates
 echo "▶ Starting GREEN container"
 docker compose -f docker-compose.green.yml up -d --force-recreate
 
-echo "▶ Waiting for GREEN to become healthy"
+echo "▶ Waiting for GREEN health"
 for i in {1..30}; do
   if curl -fs http://localhost:8001/health > /dev/null; then
     echo "✔ GREEN is healthy"
@@ -87,8 +85,8 @@ for i in {1..30}; do
   sleep 2
 done
 
-echo "▶ Switching Nginx traffic"
-sudo bash -c 'cat > /etc/nginx/conf.d/diary.conf << NGINX
+echo "▶ Writing Nginx config"
+sudo bash -c 'cat > /etc/nginx/conf.d/diary.conf << "NGINX"
 server {
     listen 80;
 
@@ -104,7 +102,7 @@ NGINX'
 sudo nginx -t
 sudo systemctl reload nginx
 
-echo "▶ Stopping BLUE container (if exists)"
+echo "▶ Cleaning BLUE container (if exists)"
 docker stop diary-backend-blue || true
 docker rm diary-backend-blue || true
 
@@ -118,10 +116,10 @@ EOF
 
     post {
         success {
-            echo "✅ Pipeline completed successfully with near-zero downtime"
+            echo "✅ Deployment completed with near-zero downtime"
         }
         failure {
-            echo "❌ Pipeline failed — check logs above"
+            echo "❌ Pipeline failed — review logs"
         }
     }
 }
