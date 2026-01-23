@@ -12,6 +12,9 @@ pipeline {
     stages {
 
         stage('Verify AWS Access') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -25,7 +28,6 @@ pipeline {
             }
         }
 
-
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
@@ -34,15 +36,27 @@ pipeline {
                       -Dsonar.projectKey=diary-backend \
                       -Dsonar.projectName=diary-backend \
                       -Dsonar.sources=. \
-                      -Dsonar.python.version=3.12
+                      -Dsonar.python.version=3.12 \
+                      ${CHANGE_ID:+-Dsonar.pullrequest.key=$CHANGE_ID} \
+                      ${CHANGE_ID:+-Dsonar.pullrequest.branch=$CHANGE_BRANCH} \
+                      ${CHANGE_ID:+-Dsonar.pullrequest.base=$CHANGE_TARGET}
                     '''
                 }
             }
         }
 
-        
-        
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
         stage('Build Docker Image') {
+            when {
+                branch 'main'
+            }
             steps {
                 sh '''
                 docker build -t ${ECR_REPO}:${IMAGE_TAG} .
@@ -51,6 +65,9 @@ pipeline {
         }
 
         stage('Login to ECR') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -69,6 +86,9 @@ pipeline {
         }
 
         stage('Push Image to ECR') {
+            when {
+                branch 'main'
+            }
             steps {
                 sh '''
                 docker tag ${ECR_REPO}:${IMAGE_TAG} \
@@ -83,10 +103,10 @@ pipeline {
             }
         }
 
-        /* ------------------------------------------------------- */
-        /* CRITICAL GUARD: WAIT FOR EXISTING INSTANCE REFRESH       */
-        /* ------------------------------------------------------- */
         stage('Wait for Existing Instance Refresh') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -117,10 +137,10 @@ pipeline {
             }
         }
 
-        /* ------------------------------------------------------- */
-        /* SCALE UP TO CREATE DEPLOYMENT BUFFER                    */
-        /* ------------------------------------------------------- */
         stage('Scale ASG Up (Deploy Buffer)') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -165,10 +185,10 @@ pipeline {
             }
         }
 
-        /* ------------------------------------------------------- */
-        /* START INSTANCE REFRESH (ACTUAL DEPLOYMENT)              */
-        /* ------------------------------------------------------- */
         stage('Deploy via ASG Instance Refresh') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -186,10 +206,10 @@ pipeline {
             }
         }
 
-        /* ------------------------------------------------------- */
-        /* WAIT FOR DEPLOYMENT TO FINISH                           */
-        /* ------------------------------------------------------- */
         stage('Wait for Instance Refresh Completion') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -234,10 +254,10 @@ pipeline {
             }
         }
 
-        /* ------------------------------------------------------- */
-        /* SCALE BACK TO NORMAL                                    */
-        /* ------------------------------------------------------- */
         stage('Scale ASG Down (Normal State)') {
+            when {
+                branch 'main'
+            }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -259,18 +279,14 @@ pipeline {
 
     post {
         success {
-            echo "CI/CD pipeline completed successfully."
-    
             slackSend(
                 channel: '#jenkins-builds',
                 color: 'good',
                 message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} deployed successfully"
             )
         }
-    
+
         failure {
-            echo "CI/CD pipeline failed. Check logs."
-    
             slackSend(
                 channel: '#jenkins-builds',
                 color: 'danger',
@@ -278,5 +294,4 @@ pipeline {
             )
         }
     }
-
 }
