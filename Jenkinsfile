@@ -25,6 +25,23 @@ pipeline {
             }
         }
 
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    sh '''
+                    sonar-scanner \
+                      -Dsonar.projectKey=diary-backend \
+                      -Dsonar.projectName=diary-backend \
+                      -Dsonar.sources=. \
+                      -Dsonar.python.version=3.12
+                    '''
+                }
+            }
+        }
+
+        
+        
         stage('Build Docker Image') {
             steps {
                 sh '''
