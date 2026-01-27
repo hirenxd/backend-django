@@ -13,7 +13,11 @@ pipeline {
 
         stage('Verify AWS Access') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -55,7 +59,11 @@ pipeline {
 
         stage('Build Docker Image') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 sh '''
@@ -66,7 +74,11 @@ pipeline {
 
         stage('Login to ECR') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -87,7 +99,11 @@ pipeline {
 
         stage('Push Image to ECR') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 sh '''
@@ -105,7 +121,11 @@ pipeline {
 
         stage('Wait for Existing Instance Refresh') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -117,7 +137,6 @@ pipeline {
                 ]) {
                     sh '''
                     echo "Checking for existing instance refresh..."
-
                     while true; do
                       COUNT=$(aws autoscaling describe-instance-refreshes \
                         --auto-scaling-group-name ${ASG_NAME} \
@@ -139,7 +158,11 @@ pipeline {
 
         stage('Scale ASG Up (Deploy Buffer)') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -187,7 +210,11 @@ pipeline {
 
         stage('Deploy via ASG Instance Refresh') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -208,7 +235,11 @@ pipeline {
 
         stage('Wait for Instance Refresh Completion') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -256,7 +287,11 @@ pipeline {
 
         stage('Scale ASG Down (Normal State)') {
             when {
-                branch 'main'
+                expression {
+                    env.BRANCH_NAME == 'main' ||
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
             }
             steps {
                 withCredentials([
@@ -279,19 +314,12 @@ pipeline {
 
     post {
         success {
-            slackSend(
-                channel: '#jenkins-builds',
-                color: 'good',
-                message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} deployed successfully"
-            )
+            slackSend(channel: '#jenkins-builds', color: 'good',
+                      message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} deployed successfully")
         }
-
         failure {
-            slackSend(
-                channel: '#jenkins-builds',
-                color: 'danger',
-                message: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER} – check Jenkins logs"
-            )
+            slackSend(channel: '#jenkins-builds', color: 'danger',
+                      message: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER} – check Jenkins logs")
         }
     }
 }
