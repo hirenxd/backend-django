@@ -1,0 +1,111 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ACCOUNT_ID: 628253046406
+  ECR_REPO: diary-backend
+  ASG_NAME: diary-public-asg
+  IMAGE_TAG: ${{ github.run_number }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # 🔐 OIDC AWS LOGIN
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Verify AWS Access
+      run: aws sts get-caller-identity
+
+    - name: Login to ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION \
+        | docker login --username AWS --password-stdin \
+          $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+    - name: Build Docker Image
+      run: docker build -t $ECR_REPO:$IMAGE_TAG .
+
+    - name: Tag & Push Image
+      run: |
+        docker tag $ECR_REPO:$IMAGE_TAG \
+          $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+        docker tag $ECR_REPO:$IMAGE_TAG \
+          $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
+        docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+        docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
+
+    - name: Wait for existing instance refresh
+      run: |
+        while true; do
+          COUNT=$(aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name $ASG_NAME \
+            --query "InstanceRefreshes[?Status=='InProgress'] | length(@)" \
+            --output text)
+          [ "$COUNT" = "0" ] && break
+          sleep 30
+        done
+
+    - name: Scale ASG up (buffer)
+      run: |
+        aws autoscaling update-auto-scaling-group \
+          --auto-scaling-group-name $ASG_NAME \
+          --desired-capacity 2
+
+    - name: Start instance refresh
+      run: |
+        aws autoscaling start-instance-refresh \
+          --auto-scaling-group-name $ASG_NAME \
+          --strategy Rolling
+
+    - name: Wait for refresh completion
+      run: |
+        while true; do
+          STATUS=$(aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name $ASG_NAME \
+            --query "InstanceRefreshes[0].Status" \
+            --output text)
+          [ "$STATUS" = "Successful" ] && break
+          [ "$STATUS" = "Failed" ] && exit 1
+          sleep 30
+        done
+
+    - name: Scale ASG down
+      run: |
+        aws autoscaling update-auto-scaling-group \
+          --auto-scaling-group-name $ASG_NAME \
+          --desired-capacity 1
+
+    - name: Slack Success
+      if: success()
+      uses: slackapi/slack-github-action@v1
+      with:
+        payload: |
+          {"text":"✅ Deployment succeeded for run ${{ github.run_number }}"}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+    - name: Slack Failure
+      if: failure()
+      uses: slackapi/slack-github-action@v1
+      with:
+        payload: |
+          {"text":"❌ Deployment failed for run ${{ github.run_number }}"}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
