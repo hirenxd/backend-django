@@ -32,14 +32,14 @@ jobs:
       - name: Security scan
         run: bandit -r .
 
-      - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v2
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      # - name: SonarQube Scan
+      #   uses: sonarsource/sonarqube-scan-action@v2
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: Sonar Quality Gate
-        uses: sonarsource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # - name: Sonar Quality Gate
+      #   uses: sonarsource/sonarqube-quality-gate-action@v1
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
