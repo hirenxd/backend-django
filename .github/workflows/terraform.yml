@@ -1,0 +1,36 @@
+name: Terraform Infra
+
+on:
+  push:
+    paths:
+      - 'terror-infra/**'
+  pull_request:
+    paths:
+      - 'terror-infra/**'
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: terror-infra/environments/prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::628253046406:role/github-actions-terraform
+          aws-region: ap-south-1
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan
