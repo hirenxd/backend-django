@@ -310,8 +310,7 @@ pipeline {
                 }
             }
         }
-
-
+    }
 
     post {
         success {
