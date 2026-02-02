@@ -1,21 +1,17 @@
 name: Terraform Infra
 
 on:
+  workflow_dispatch:   # manual only
   push:
     paths:
       - 'terror-infra/**'
-  pull_request:
-    paths:
-      - 'terror-infra/**'
 
-# 🔑 REQUIRED FOR AWS OIDC
 permissions:
   id-token: write
   contents: read
 
 jobs:
   terraform:
-    name: Terraform Plan
     runs-on: ubuntu-latest
 
     defaults:
@@ -23,16 +19,11 @@ jobs:
         working-directory: terror-infra/environments/prod
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.6
+      - uses: hashicorp/setup-terraform@v2
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v2
+      - uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::628253046406:role/github-actions-deploy-role
           aws-region: ap-south-1
@@ -44,4 +35,8 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -no-color
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply (Manual Approval)
+        if: github.event_name == 'workflow_dispatch'
+        run: terraform apply -auto-approve tfplan
